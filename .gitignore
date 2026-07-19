@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Données réelles (sensibles) exclues du dépôt — sauf le jeu de données factice
+# utilisé pour l'hébergement public de démonstration.
+*.xlsx
+!demo_data/*.xlsx
+
+# Fichiers de sortie des tests locaux, pas utiles à versionner.
+streamlit.log
+ngrok.log
+test_e2e_output.txt
