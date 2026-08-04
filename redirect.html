@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+</head>
+<body style="margin:0; padding:0;">
+    <iframe 
+        id="chatbot"
+        style="width:100%; height:100vh; border:none;"
+        src="">
+    </iframe>
+    
+    <script>
+        // Appel avec le header ngrok pour contourner l'avertissement
+        const url = "https://grumpily-compound-bucked.ngrok-free.dev";
+        
+        fetch(url, {
+            headers: {
+                "ngrok-skip-browser-warning": "true"
+            }
+        })
+        .then(() => {
+            document.getElementById("chatbot").src = url;
+        });
+    </script>
+</body>
+</html>

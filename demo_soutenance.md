@@ -8,7 +8,7 @@
 - [ ] Fermer les autres apps/onglets qui pourraient ralentir la machine ou distraire.
 - [ ] Avoir ce fichier ouvert sur un second écran ou imprimé, pour suivre le script sans stresser.
 
-**Note sur l'intégration Power BI** : le Jour 8 a prouvé que l'intégration technique fonctionne (visuel "Contenu Web" + iframe), mais elle dépend d'un tunnel temporaire (ngrok) puisqu'il n'y a pas d'hébergement interne permanent. Pour la soutenance, il est plus sûr de montrer l'app dans un **onglet de navigateur séparé, à côté du dashboard**, plutôt que de dépendre d'un tunnel en direct devant le jury. Mentionne que l'intégration réelle est techniquement validée (Jour 8) et prévue pour la suite.
+**Décision finale sur l'intégration Power BI** : après plusieurs tests (Jour 8, puis reprise du 19/07), l'intégration directe dans un visuel Power BI n'est pas retenue — les visuels gratuits (HTML Content, Shielded HTML Viewer en version d'essai) ne peuvent pas exécuter l'application JavaScript de Streamlit (limitation de sécurité de la plateforme, pas un problème de configuration ; une vraie solution existerait mais est payante). L'app se montre donc dans un **onglet de navigateur séparé, à côté du dashboard Power BI**. Devant le jury, présente ça comme un choix assumé : la technique d'exposition (tunnel + visuel externe) a été testée et documentée, la limitation identifiée est celle de l'écosystème de visuels gratuits Power BI, pas de l'assistant lui-même.
 
 ---
 
