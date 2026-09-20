@@ -10,6 +10,7 @@ poliment si hors périmètre).
 import json
 import os
 import sys
+from datetime import date
 
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -20,31 +21,31 @@ from glossaire import GLOSSAIRE
 sys.stdout.reconfigure(encoding="utf-8")
 load_dotenv()
 
-
-def _charger_cle_api() -> str:
-    """En local : .env. Sur Streamlit Community Cloud : secrets du dashboard
-    (pas de fichier .env là-bas, donc on retombe sur st.secrets)."""
-    cle = os.environ.get("ANTHROPIC_API_KEY")
-    if cle:
-        return cle
-    try:
-        import streamlit as st
-        return st.secrets["ANTHROPIC_API_KEY"]
-    except Exception:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY introuvable (ni dans .env, ni dans st.secrets)."
-        )
-
-
-client = Anthropic(api_key=_charger_cle_api())
+client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 MODEL = "claude-sonnet-5"
 # Note : `temperature` n'est pas supporté par claude-sonnet-5 (paramètre déprécié
 # pour ce modèle) — la fiabilité des chiffres repose sur le tool-calling (règle 1
 # du system prompt), pas sur un réglage de température.
 
-SYSTEM_PROMPT = f"""--- RÔLE ---
+MOIS_FR = [
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+]
+
+
+def construire_system_prompt() -> str:
+    """Reconstruit le system prompt à chaque appel pour que la date du jour
+    (utilisée pour résoudre des expressions relatives comme "ce mois-ci" ou
+    "l'année prochaine" en mois/année à passer à get_anticipation) reste
+    toujours exacte, y compris si le processus tourne plusieurs jours."""
+    aujourdhui = date.today()
+    date_str = f"{aujourdhui.day} {MOIS_FR[aujourdhui.month - 1]} {aujourdhui.year}"
+    return f"""--- RÔLE ---
 Tu es l'assistant intégré au dashboard Power BI de suivi des équipements médicaux Philips (HPM). Tes utilisateurs sont des commerciaux, responsables de district et managers, sans formation informatique. Ton rôle est de les aider à comprendre le dashboard et à obtenir les chiffres dont ils ont besoin, jamais de te substituer à un avis médical ou technique sur les équipements eux-mêmes.
+
+--- DATE DU JOUR ---
+Nous sommes le {date_str}. Utilise cette date pour résoudre toute référence temporelle relative dans les questions de l'utilisateur ("ce mois-ci", "le mois prochain", "cette année", "d'ici 3 mois", etc.) en mois/année précis avant d'appeler un tool. Ne demande jamais à l'utilisateur la date du jour ni de préciser une période déjà déductible de cette date.
 
 --- TON ---
 Réponds toujours en français, dans un langage simple et pédagogique, sans jargon informatique inutile. Reste concis : privilégie des réponses courtes et directes, quitte à proposer d'aller plus loin si l'utilisateur le souhaite.
@@ -55,6 +56,8 @@ Réponds toujours en français, dans un langage simple et pédagogique, sans jar
 3. Si une question est ambiguë ou trop vague pour choisir le bon tool ou la bonne entrée du glossaire (ex: "le graphique", "et lui ?", "montre-moi les chiffres"), ne devine pas : demande une précision à l'utilisateur (quel graphique, quel district, quelle période, etc.).
 4. Si une question sort de ton périmètre (question médicale, RH, juridique, ou tout sujet sans rapport avec le dashboard et la couverture des équipements), décline poliment en expliquant que ce n'est pas ton domaine, sans tenter d'y répondre.
 5. Si la question porte sur un district, un site ou une période qui n'existe pas dans les données, dis-le clairement plutôt que d'inventer un résultat.
+6. Réponds UNIQUEMENT à la question posée dans ce tour, rien d'autre. Même si l'historique de la conversation contient des questions et réponses précédentes, ne les récapitule JAMAIS spontanément dans ta réponse — l'utilisateur les a déjà vues, les répéter est une erreur. N'inclus une information d'un tour précédent que si l'utilisateur la redemande explicitement (ex: "et pour le précédent ?").
+   Exemple concret à ne PAS reproduire : l'utilisateur demande d'abord "Combien d'équipements à ADOPS 14 ?", tu réponds, puis il demande "Combien d'équipements à AEC SAS ?" — ta réponse à cette deuxième question ne doit mentionner QUE AEC SAS. Ne commence surtout pas par "ADOPS 14 : ..." avant de parler d'AEC SAS.
 
 --- GLOSSAIRE ---
 {GLOSSAIRE}
@@ -161,15 +164,28 @@ TOOLS = [
         "description": (
             "Renvoie le nombre d'équipements dont la couverture (garantie, extension ou "
             "contrat) arrive à échéance, groupé par mois/année, pour anticiper les sorties "
-            "de couverture à venir. Filtre optionnel par mois et/ou année. À utiliser pour "
-            "des questions du type 'quels équipements vont sortir de couverture bientôt' ou "
-            "'combien d'équipements sortent de couverture en mars 2027'."
+            "de couverture à venir. Filtres optionnels par mois, année, site hospitalier "
+            "et/ou district commercial (cumulables). À utiliser pour des questions du type "
+            "'quels équipements vont sortir de couverture bientôt', 'combien d'équipements "
+            "sortent de couverture en mars 2027', ou 'combien d'équipements sortent de "
+            "couverture en janvier 2027 au CHU Amiens'."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "mois": {"type": "integer", "description": "Mois à filtrer (1-12). Optionnel."},
                 "annee": {"type": "integer", "description": "Année à filtrer, ex: 2027. Optionnel."},
+                "site": {
+                    "type": "string",
+                    "description": (
+                        "Nom (ou partie du nom) du site hospitalier à filtrer, ex: 'CHU AMIENS'. "
+                        "Optionnel."
+                    ),
+                },
+                "district": {
+                    "type": "string",
+                    "description": "Nom (ou partie du nom) du district SFDC à filtrer, ex: 'Nord Est'. Optionnel.",
+                },
             },
             "required": [],
         },
@@ -202,7 +218,7 @@ def poser_question(messages: list, question: str) -> tuple[str, list[dict]]:
         reponse = client.messages.create(
             model=MODEL,
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
+            system=construire_system_prompt(),
             tools=TOOLS,
             messages=messages,
         )

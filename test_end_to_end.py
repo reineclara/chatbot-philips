@@ -12,6 +12,13 @@ positifs sur des phrases banales ("la fin de la garantie", etc.). La vraie
 protection contre ces champs bruts est le garde-fou par clé de dict
 (_verifier_allowlist) dans data_layer.py, déjà validé au Jour 3. Ici on ne
 vérifie que les termes assez distinctifs pour qu'un vrai hit soit significatif.
+
+"contrat sap" et "contrat ga" sont exclus pour la même raison : ce sont aussi
+des noms de colonnes brutes, MAIS "contrat SAP" est en plus un terme métier
+que le glossaire enseigne volontairement à l'utilisateur (glossaire.py,
+questions "équipement couvert" / "extension de garantie" / "contrat de
+maintenance SAP"). Une réponse purement conceptuelle (aucun tool appelé) qui
+dit "contrat SAP" ne fuite donc rien — elle reformule le glossaire.
 """
 
 import time
@@ -21,7 +28,7 @@ from assistant import poser_question
 SEUIL_SECONDES = 10.0
 
 CHAMPS_SENSIBLES_A_VERIFIER = {
-    "serial number", "material", "contrat sap", "contrat ga",
+    "serial number", "material",
     "nom rt", "ville sh", "install date", "libelle fl", "personnalisé",
 }
 

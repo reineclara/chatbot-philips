@@ -8,24 +8,14 @@ fonction renvoie un dict JSON-sérialisable : un texte prêt à lire pour le LLM
 et si pertinent des données de graphique pour l'affichage Streamlit/Plotly.
 """
 
-import os
+import re
 from datetime import date
 from functools import lru_cache
 
 import pandas as pd
 
-# MODE_DEMO=true (variable d'environnement) bascule sur un jeu de données
-# factice — utilisé uniquement pour l'hébergement public de démonstration
-# (Streamlit Community Cloud). En local, sans cette variable, on utilise les
-# vraies données comme avant.
-MODE_DEMO = os.environ.get("MODE_DEMO", "").lower() in ("1", "true", "yes")
-
-if MODE_DEMO:
-    FICHIER_BASE = "demo_data/Base_Demo.xlsx"
-    FICHIER_MODELES = "demo_data/modeles_demo.xlsx"
-else:
-    FICHIER_BASE = "Base_HPM_2026 Q2.xlsx"
-    FICHIER_MODELES = "modeles.xlsx"
+FICHIER_BASE = "Base_HPM_2026 Q2.xlsx"
+FICHIER_MODELES = "modeles.xlsx"
 
 COUVERTS = ["Sous contrat", "Extension de garantie", "Garantie constructeur"]
 
@@ -166,11 +156,26 @@ def charger_donnees() -> pd.DataFrame:
     return df
 
 
+def _normaliser_texte(texte: str) -> str:
+    """Majuscules + tirets/espaces multiples uniformisés en un seul espace, pour que
+    "DOM-TOM" et "Dom Tom(FR)" soient reconnus comme équivalents lors d'une recherche."""
+    return re.sub(r"[\s\-]+", " ", str(texte).upper()).strip()
+
+
 def _filtrer_district(df: pd.DataFrame, district: str | None) -> pd.DataFrame:
     if not district:
         return df
-    district_norm = district.strip().upper()
-    return df[df["District SFDC"].astype(str).str.upper().str.contains(district_norm, na=False)]
+    district_norm = _normaliser_texte(district)
+    districts_normalises = df["District SFDC"].astype(str).apply(_normaliser_texte)
+    return df[districts_normalises.str.contains(district_norm, na=False)]
+
+
+def _filtrer_site(df: pd.DataFrame, site: str | None) -> pd.DataFrame:
+    if not site:
+        return df
+    site_norm = _normaliser_texte(site)
+    sites_normalises = df["SH Name"].astype(str).apply(_normaliser_texte)
+    return df[sites_normalises.str.contains(site_norm, na=False)]
 
 
 def get_kpis_globaux() -> dict:
@@ -262,8 +267,8 @@ def get_kpis_par_site(site: str | None = None, district: str | None = None) -> d
     ).reset_index()
 
     if site:
-        site_norm = site.strip().upper()
-        filtre = df_site[df_site["SH Name"].str.upper().str.contains(site_norm, na=False)]
+        site_norm = _normaliser_texte(site)
+        filtre = df_site[df_site["SH Name"].apply(_normaliser_texte).str.contains(site_norm, na=False)]
         if filtre.empty:
             return {"resume": f"Aucun site ne correspond à '{site}'.", "sites": []}
         lignes = [
@@ -271,7 +276,19 @@ def get_kpis_par_site(site: str | None = None, district: str | None = None) -> d
             f"{int(r['couverts'])} couverts, {int(r['non_couverts'])} non couverts"
             for _, r in filtre.iterrows()
         ]
-        return _verifier_allowlist({"resume": "\n".join(lignes), "sites": filtre.to_dict(orient="records")})
+        entete = ""
+        if len(filtre) > 1:
+            entete = (
+                f"ATTENTION : {len(filtre)} entités DISTINCTES correspondent à '{site}' "
+                f"(établissements ou entités administratives différents, pas des doublons). "
+                f"NE PAS additionner leurs totaux pour donner un chiffre unique — présente-les "
+                f"séparément et demande à l'utilisateur de préciser laquelle il souhaite si sa "
+                f"question ne visait qu'une seule entité.\n\n"
+            )
+        return _verifier_allowlist({
+            "resume": entete + "\n".join(lignes),
+            "sites": filtre.to_dict(orient="records"),
+        })
 
     return _verifier_allowlist({
         "resume": f"{len(df_site)} sites trouvés" + (f" dans le district {district}" if district else ""),
@@ -308,9 +325,27 @@ def get_top_sites(n: int = 10, critere: str = "couverts") -> dict:
     })
 
 
-def get_anticipation(mois: int | None = None, annee: int | None = None) -> dict:
-    """Équipements dont la couverture (garantie, extension ou contrat) arrive à échéance, par mois/année."""
+def get_anticipation(
+    mois: int | None = None,
+    annee: int | None = None,
+    site: str | None = None,
+    district: str | None = None,
+) -> dict:
+    """Équipements dont la couverture (garantie, extension ou contrat) arrive à échéance,
+    par mois/année. Filtre optionnel par mois, année, site hospitalier (SH Name) et/ou
+    district commercial SFDC."""
     df = charger_donnees()
+
+    if site:
+        df = _filtrer_site(df, site)
+        if df.empty:
+            return {"resume": f"Aucun site ne correspond à '{site}'.", "mois": []}
+
+    if district:
+        df = _filtrer_district(df, district)
+        if df.empty:
+            return {"resume": f"Aucun district ne correspond à '{district}'.", "mois": []}
+
     today_ts = pd.Timestamp(date.today())
     df_anticip = df[
         df["Couverture"].isin(COUVERTS) &
@@ -332,16 +367,22 @@ def get_anticipation(mois: int | None = None, annee: int | None = None) -> dict:
     if df_mois.empty:
         return {"resume": "Aucun équipement ne sort de couverture sur cette période.", "mois": []}
 
+    lieu = f" pour {site}" if site else (f" dans le district {district}" if district else "")
     lignes = [
-        f"{r['Mois_Annee_str']} : {int(r['nb_equipements'])} équipements sortent de couverture"
+        f"{r['Mois_Annee_str']} : {int(r['nb_equipements'])} équipements sortent de couverture{lieu}"
         for _, r in df_mois.iterrows()
     ]
+    titre = "Anticipation des sorties de couverture par mois"
+    if site:
+        titre += f" — {site}"
+    elif district:
+        titre += f" — {district}"
     return _verifier_allowlist({
         "resume": "\n".join(lignes),
         "mois": df_mois[["Mois_Annee_str", "nb_equipements"]].to_dict(orient="records"),
         "graphique": {
             "type": "bar",
-            "titre": "Anticipation des sorties de couverture par mois",
+            "titre": titre,
             "labels": df_mois["Mois_Annee_str"].tolist(),
             "valeurs": df_mois["nb_equipements"].tolist(),
         },

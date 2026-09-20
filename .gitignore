@@ -4,12 +4,23 @@ __pycache__/
 .venv/
 venv/
 
-# Données réelles (sensibles) exclues du dépôt — sauf le jeu de données factice
-# utilisé pour l'hébergement public de démonstration.
+# Données réelles (sensibles) exclues du dépôt.
 *.xlsx
-!demo_data/*.xlsx
 
 # Fichiers de sortie des tests locaux, pas utiles à versionner.
 streamlit.log
 ngrok.log
+cloudflared.log
 test_e2e_output.txt
+journal_execution_test_end_to_end.txt
+test_encodage.txt
+
+# Résultats de bancs de test générés à partir des vraies données (chiffres
+# métier réels, ex: totaux par district) — jamais à publier, même si le
+# script qui les génère (lui-même sans données réelles) reste versionné.
+banc_questions_etendu.csv
+resultats_banc_etendu.csv
+resultats_comparaison_h2.csv
+
+# Image téléchargée sans rapport avec le projet, droits d'auteur incertains.
+OIP*.jpg
